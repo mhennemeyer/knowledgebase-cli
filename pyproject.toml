@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowledgebase"
+version = "0.1.0"
+description = "Ubiquitäre CLI-basierte Knowledgebase für E-Books – semantische Suche mit Quellenangaben."
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0",
+    "faiss-cpu>=1.7",
+    "PyMuPDF>=1.23",
+    "numpy>=1.24",
+    "typer>=0.9",
+]
+
+[project.scripts]
+kb = "knowledgebase.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
