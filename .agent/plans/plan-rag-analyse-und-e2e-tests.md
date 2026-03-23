@@ -6,47 +6,90 @@ Analyse der optimalen Nutzung des Knowledgebase-Tools aus der Perspektive eines 
 
 ---
 
+## 0. API-Kosten-Transparenz: Wann entstehen Kosten?
+
+Drei Operationen verursachen OpenAI-API-Kosten:
+
+| Operation | Was passiert | API-Calls | Kosten pro Aufruf |
+|---|---|---|---|
+| **`kb init`** | Alle Chunks werden embedded | 1 Embedding-Call pro Batch (alle Chunks) | **Höchste Kosten**: ~$0.13 pro 10.000 Chunks (`text-embedding-3-large`) |
+| **`kb search`** | Die Query wird embedded, FAISS durchsucht lokal | 1 Embedding-Call (nur die Query) | **Minimal**: ~$0.00001 pro Suche |
+| **`kb ask`** | Query-Embedding + LLM-Antwortgenerierung | 1 Embedding-Call + 1 LLM-Call | **Gering**: ~$0.01–0.05 pro Frage (`gpt-4o`) |
+
+**Fazit**: `kb init` ist die einzige "teure" Operation (einmalig pro KB-Aufbau). `kb search` ist quasi kostenlos. `kb ask` kostet pro Frage etwas durch den LLM-Call, aber bei normaler Nutzung vernachlässigbar.
+
+### Kosten-Vergleich: Alte vs. neue Models
+
+| Szenario (10 Bücher, ~5.000 Chunks) | Alte Models | Neue Models | Faktor |
+|---|---|---|---|
+| `kb init` (Embeddings) | ~$0.01 (`e3-small`) | ~$0.065 (`e3-large`) | ~6x |
+| `kb ask` (1 Frage) | ~$0.003 (`gpt-4o-mini`) | ~$0.02 (`gpt-4o`) | ~7x |
+| 100× `kb ask` | ~$0.30 | ~$2.00 | ~7x |
+| `kb search` (1 Suche) | ~$0.000002 | ~$0.000013 | vernachlässigbar |
+
+**Einschätzung**: Die Mehrkosten sind absolut gesehen gering. Ein kompletter KB-Aufbau mit 10 Büchern + 100 Fragen kostet ~$2 statt ~$0.30 – bei deutlich besserer Qualität.
+
+---
+
 ## 1. Optimale RAG-Zusammenstellung einer Knowledgebase
 
-### 1.1 Maximale Bücherzahl pro Knowledgebase
+### 1.1 Empfohlene Models (UPDATE: Stärkere Models)
 
-**Empfehlung: 5–15 Bücher pro KB, Maximum ~25**
+| Komponente | Bisher | Neu (Empfehlung) | Begründung |
+|---|---|---|---|
+| **Embedding-Modell** | `text-embedding-3-small` (1536d) | **`text-embedding-3-large`** (3072d) | Bessere semantische Trennung, weniger falsche Treffer |
+| **LLM für Antworten** | `gpt-4o-mini` | **`gpt-4o`** | Bessere Synthese mehrerer Quellen, Reasoning über Widersprüche |
+| **top_k** | 5 | **10** | Mit gpt-4o können mehr Kontext-Chunks sinnvoll verarbeitet werden |
+| **FAISS Index** | `IndexFlatIP` | `IndexFlatIP` (bleibt) | ANN-Index erst ab >50.000 Chunks nötig |
+| **Chunk-Size** | 1500 | 1500 (bleibt) | Passt weiterhin gut |
 
-Begründung (technische Constraints):
-- **Embedding-Dimension**: `text-embedding-3-small` = 1536 Dimensionen
-- **FAISS IndexFlatIP**: Brute-Force-Suche, skaliert linear mit Anzahl der Vektoren. Ab ~100.000 Chunks wird die Suche spürbar langsamer (bei 15 Büchern à 300 Seiten ≈ 4.500–15.000 Chunks – unproblematisch)
-- **Kontext-Fenster**: `kb ask` nutzt `top_k=5` Chunks à max. 1500 Zeichen = max. 7.500 Zeichen Kontext. Bei zu vielen Büchern sinkt die Wahrscheinlichkeit, dass die 5 relevantesten Chunks tatsächlich die Frage beantworten
-- **Kosten**: Jeder `kb init`-Aufruf erzeugt Embeddings über die OpenAI API. 10.000 Chunks ≈ $0.02 (günstig), aber bei häufigem Rebuild summiert sich das
+**Code-Änderungen** (in `config.py`):
+```python
+EMBEDDING_MODEL = "text-embedding-3-large"   # war: text-embedding-3-small
+LLM_MODEL = "gpt-4o"                         # war: gpt-4o-mini
+# top_k wird als CLI-Default angepasst, nicht in config.py
+```
+
+### 1.2 Maximale Bücherzahl pro Knowledgebase
+
+**Empfehlung: 5–20 Bücher pro KB, Maximum ~35**
+
+Begründung (mit stärkeren Models):
+- **Embedding-Dimension**: `text-embedding-3-large` = 3072 Dimensionen → bessere Trennung im Vektorraum, weniger "falsche" Treffer bei heterogenerem Inhalt
+- **FAISS IndexFlatIP**: Brute-Force-Suche, skaliert linear. Bei 20 Büchern à 300 Seiten ≈ 6.000–20.000 Chunks – unproblematisch
+- **Kontext-Fenster**: `kb ask` nutzt jetzt `top_k=10` Chunks à max. 1500 Zeichen = max. 15.000 Zeichen Kontext. `gpt-4o` kann diese Menge sinnvoll verarbeiten und synthetisieren
+- **Kosten**: 10.000 Chunks ≈ $0.13 mit `text-embedding-3-large` (statt $0.02) – immer noch günstig
 
 Praktische Faustregel:
 | KB-Größe | Bücher | Chunks (geschätzt) | Eignung |
 |---|---|---|---|
 | Klein | 3–5 | 1.000–3.000 | Ideal für fokussierte Themen |
-| Mittel | 6–15 | 3.000–10.000 | Guter Kompromiss |
-| Groß | 16–25 | 10.000–20.000 | Noch sinnvoll, Precision sinkt |
-| Zu groß | >25 | >20.000 | RAG-Qualität leidet |
+| Mittel | 6–15 | 3.000–10.000 | Guter Kompromiss (empfohlen) |
+| Groß | 16–35 | 10.000–25.000 | Mit `e3-large` gut machbar |
+| Zu groß | >35 | >25.000 | RAG-Qualität leidet auch mit stärkeren Models |
 
-### 1.2 Thematische Fokussierung vs. Diversität
+### 1.3 Thematische Fokussierung vs. Diversität
 
 **Empfehlung: Fokussierte, thematische KBs – nicht divers**
 
-Begründung:
-- **Semantic Search ist kein Allwissender**: Die Cosine Similarity findet textlich ähnliche Passagen. Bei einer KB mit Büchern über FP, Kochen und Quantenphysik konkurrieren irrelevante Chunks mit relevanten um die top_k-Plätze
-- **Prompt-Qualität**: Der RAG-Prompt enthält 5 Kontext-Chunks. Wenn 2 davon aus einem themenfremden Buch stammen, wird die Antwort verwässert oder widersprüchlich
-- **Agent-Nutzung**: Ein Agent (wie Junie) profitiert davon, gezielt die richtige KB wählen zu können: `kb ask "Was sind Monaden?" --name fp` statt eine globale KB zu durchsuchen
-- **Analogie zu beuys**: Wie `beuys` ein spezialisiertes Tool für Bildgenerierung ist, sollte jede KB ein spezialisiertes Wissensdomäne abdecken
+Diese Empfehlung bleibt auch mit stärkeren Models bestehen – sie ist eine Information-Retrieval-Grundregel, keine Modell-Limitation. Allerdings werden die Grenzen weicher:
+
+- **Semantic Search**: `text-embedding-3-large` trennt thematisch verschiedene Chunks besser → etwas diversere KBs sind tolerierbar
+- **LLM-Robustheit**: `gpt-4o` kann besser mit 2-3 irrelevanten Chunks im Kontext umgehen und diese ignorieren
+- **Trotzdem gilt**: Ein Agent (wie Junie) profitiert weiterhin davon, gezielt die richtige KB wählen zu können: `kb ask "Was sind Monaden?" --name fp` statt eine globale KB zu durchsuchen
+- **Analogie zu beuys**: Wie `beuys` ein spezialisiertes Tool für Bildgenerierung ist, sollte jede KB eine spezialisierte Wissensdomäne abdecken
 
 Empfohlene KB-Struktur (Beispiele):
 ```
-~/.kb/fp/          → Functional Programming (5-8 Bücher)
-~/.kb/math/        → Kategorie-Theorie, Algebra (4-6 Bücher)
-~/.kb/arch/        → Software-Architektur, Clean Code (5-7 Bücher)
-~/.kb/ml/          → Machine Learning, Deep Learning (6-10 Bücher)
+~/.kb/fp/          → Functional Programming (5-10 Bücher)
+~/.kb/math/        → Kategorie-Theorie, Algebra (4-8 Bücher)
+~/.kb/arch/        → Software-Architektur, Clean Code (5-10 Bücher)
+~/.kb/ml/          → Machine Learning, Deep Learning (6-12 Bücher)
 ```
 
-**Anti-Pattern**: Eine einzige KB mit allen Büchern. Die Retrieval-Qualität sinkt, weil der Embedding-Raum zu heterogen wird.
+**Anti-Pattern**: Eine einzige KB mit allen Büchern. Auch mit `text-embedding-3-large` sinkt die Retrieval-Qualität bei zu heterogenem Embedding-Raum.
 
-### 1.3 Zusammensetzung innerhalb einer thematischen KB
+### 1.4 Zusammensetzung innerhalb einer thematischen KB
 
 Innerhalb eines Themas ist eine gewisse Diversität sinnvoll:
 - **1–2 Grundlagenwerke** (z.B. "Category Theory for Programmers")
@@ -54,7 +97,7 @@ Innerhalb eines Themas ist eine gewisse Diversität sinnvoll:
 - **1–2 Referenzwerke** (z.B. Spezifikationen, Standards)
 - **Optional**: Papers oder kürzere Texte als Ergänzung
 
-Das sorgt dafür, dass der RAG bei einer Frage sowohl theoretische Grundlagen als auch praktische Anwendungen als Quellen liefern kann.
+Das sorgt dafür, dass der RAG bei einer Frage sowohl theoretische Grundlagen als auch praktische Anwendungen als Quellen liefern kann. Mit `top_k=10` und `gpt-4o` werden nun mehr Perspektiven gleichzeitig berücksichtigt.
 
 ---
 
@@ -85,7 +128,7 @@ Aktuell ignoriert die Pipeline alle Bilder – `page.get_text("text")` in PyMuPD
 
 1. **Bilder extrahieren** (PyMuPDF kann das: `page.get_images()`)
 2. **Vorfilterung**: Nur Bilder über einer Mindestgröße (z.B. >100x100px, >5KB) verarbeiten – filtert Icons, Trennlinien etc.
-3. **Vision AI Beschreibung**: GPT-4o (nicht mini) mit Prompt: "Beschreibe dieses Diagramm/diese Grafik aus einem Fachbuch präzise. Fokus auf die dargestellten Konzepte und Beziehungen."
+3. **Vision AI Beschreibung**: `gpt-4o` mit Prompt: "Beschreibe dieses Diagramm/diese Grafik aus einem Fachbuch präzise. Fokus auf die dargestellten Konzepte und Beziehungen."
 4. **Bildbeschreibung als Chunk**: Die Beschreibung wird als normaler Chunk indexiert, mit Metadaten `image=True`, um sie bei der Suche optional ein-/auszuschließen
 5. **Opt-in**: `kb init ~/Books --with-images` – standardmäßig deaktiviert wegen Kosten/Zeit
 
@@ -93,7 +136,7 @@ Aktuell ignoriert die Pipeline alle Bilder – `page.get_text("text")` in PyMuPD
 
 Ein typisches Fachbuch (300 Seiten) enthält ~30–80 relevante Bilder nach Filterung.
 - Bei 10 Büchern: ~300–800 Bilder
-- GPT-4o Vision: ~$3–24 pro KB-Init (vs. ~$0.02 für reine Text-Embeddings)
+- GPT-4o Vision: ~$3–24 pro KB-Init (vs. ~$0.13 für reine Text-Embeddings mit `e3-large`)
 - **Fazit**: Als Opt-in sinnvoll, nicht als Standard
 
 ---
@@ -141,7 +184,7 @@ Testet gegen die echte OpenAI API, aber mit minimalen Fixture-Daten:
 - **Validierung**: Echte Embeddings werden erzeugt, echte Suche findet semantisch korrekte Ergebnisse, echte LLM-Antwort enthält Quellenreferenzen
 
 Konkrete Tests:
-1. `test_integration_real_embeddings`: Embeddings für bekannten Text haben erwartete Dimension (1536)
+1. `test_integration_real_embeddings`: Embeddings für bekannten Text haben erwartete Dimension (3072 bei `text-embedding-3-large`)
 2. `test_integration_semantic_search`: Semantisch ähnliche Query findet den richtigen Chunk
 3. `test_integration_rag_answer`: Frage wird mit plausiblen Quellen beantwortet
 
@@ -205,12 +248,16 @@ markers = [
 
 | Thema | Empfehlung |
 |---|---|
-| **Bücher pro KB** | 5–15, max. 25 |
-| **Thematische Ausrichtung** | Fokussiert, nicht divers. Mehrere spezialisierte KBs statt einer großen |
+| **Embedding-Modell** | `text-embedding-3-large` (3072d) statt `text-embedding-3-small` |
+| **LLM-Modell** | `gpt-4o` statt `gpt-4o-mini` |
+| **top_k** | 10 statt 5 (mehr Kontext-Chunks für bessere Antworten) |
+| **Bücher pro KB** | 5–20, max. 35 (erhöht durch bessere Embeddings) |
+| **Thematische Ausrichtung** | Fokussiert, nicht divers – bleibt auch mit stärkeren Models richtig |
 | **KB-Nutzung durch Agent** | Analog zu beuys: `kb ask "Frage" --name <thema> --json` als Tool-Call |
 | **Vision AI für Bilder** | Sinnvoll als Opt-in (`--with-images`), nicht als Standard. Phase 5+ |
 | **E2E-Tests: Priorität 1** | Pipeline-E2E mit Fixtures + gemockten APIs (Stufe 1) |
 | **E2E-Tests: Priorität 2** | API-Integration-Tests mit `@pytest.mark.integration` (Stufe 2) |
+| **Kosten** | `kb init` ist die einzige teure Operation (einmalig). `kb search` ist quasi kostenlos. `kb ask` kostet ~$0.02/Frage mit gpt-4o |
 
 ---
 

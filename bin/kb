@@ -1,0 +1,5 @@
+#!/bin/bash
+# Knowledgebase CLI wrapper – global entry point
+PROJ_DIR="/Users/mhennemeyer/Desktop/Work/Articles/Knowledgebase"
+export PYTHONPATH="$PROJ_DIR:$PYTHONPATH"
+exec "$PROJ_DIR/.venv/bin/python" -m knowledgebase.cli "$@"

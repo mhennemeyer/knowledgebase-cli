@@ -22,3 +22,7 @@ kb = "knowledgebase.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: Tests mit echtem OpenAI API-Key",
+    "e2e: Full CLI E2E-Tests (Subprocess)",
+]

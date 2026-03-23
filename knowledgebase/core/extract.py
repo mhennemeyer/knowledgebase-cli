@@ -193,6 +193,29 @@ def extract_all_books(config: KBConfig) -> list[dict]:
     return results
 
 
+def extract_single_book(book_path: Path, config: KBConfig) -> dict:
+    """
+    Extrahiert ein einzelnes Buch und speichert das Markdown.
+    """
+    config.ensure_dirs()
+    book_name = book_path.name
+    slug = slugify(book_name)
+    md_filename = f"{slug}.md"
+    md_path = config.markdown_dir / md_filename
+
+    extractor = get_extractor(book_path)
+    markdown, page_count = extractor(book_path)
+    md_path.write_text(markdown, encoding="utf-8")
+
+    return {
+        "book_name": book_name,
+        "slug": slug,
+        "md_file": md_filename,
+        "page_count": page_count,
+        "format": book_path.suffix.lower(),
+    }
+
+
 def extract_all_pdfs(config: KBConfig) -> list[dict]:
     """
     Legacy-Wrapper: Extrahiert alle PDFs aus dem konfigurierten Verzeichnis.

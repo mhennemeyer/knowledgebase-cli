@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-DEFAULT_KB_DIR = Path.home() / ".kb"
+DEFAULT_KB_DIR = Path.home() / "Knowledgebase"
 DEFAULT_KB_NAME = "default"
-EMBEDDING_MODEL = "text-embedding-3-small"
-LLM_MODEL = "gpt-4o-mini"
+EMBEDDING_MODEL = "text-embedding-3-large"
+LLM_MODEL = "gpt-4o"
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 200
 

@@ -42,7 +42,7 @@ export OPENAI_API_KEY='your-api-key-here'
 
 > **Tip:** Add this to your `~/.zshrc` or `~/.bashrc` for persistence.
 
-All knowledgebase data is stored under `~/.kb/<name>/`.
+All knowledgebase data is stored under `~/Knowledgebase/<name>/`.
 
 ## Usage
 
@@ -161,9 +161,9 @@ PDF/EPUB → extract → Markdown → chunk → Chunks → index → FAISS
 | Language | Python ≥ 3.11 |
 | PDF extraction | PyMuPDF (fitz) |
 | EPUB extraction | ebooklib + BeautifulSoup4 |
-| Embeddings | OpenAI text-embedding-3-small |
+| Embeddings | OpenAI text-embedding-3-large |
 | Vector index | FAISS (faiss-cpu) |
-| LLM (RAG) | OpenAI GPT-4o-mini |
+| LLM (RAG) | OpenAI GPT-4o |
 | CLI framework | Typer |
 | Tests | pytest |
 | Packaging | pyproject.toml + pip install -e . |
@@ -174,7 +174,13 @@ PDF/EPUB → extract → Markdown → chunk → Chunks → index → FAISS
 - [x] Phase 2: CLI with Typer
 - [x] Phase 3: RAG answer generation (`kb ask`)
 - [x] EPUB support (extraction abstraction + EPUB extractor)
-- [ ] Phase 4: Multi-KB management, incremental updates, config file
+- [x] Model upgrades (`text-embedding-3-large`, `gpt-4o`, `top_k=10`)
+- [x] E2E test suite (10 pipeline tests with programmatic PDF fixtures)
+- [x] Multi-KB management (`--name`, `--base-dir`)
+- [x] Global CLI installation (`~/.local/bin/kb`)
+- [x] LambdaPy migration — 4 thematic KBs (fp, cat, arch, ai) from 20 books
+- [x] Incremental updates (`kb add` for single books)
+- [ ] Configuration file (`~/Knowledgebase/config.toml`)
 
 ## Development
 

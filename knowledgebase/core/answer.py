@@ -50,7 +50,7 @@ def build_user_prompt(question: str, results: list[SearchResult]) -> str:
 
 def make_openai_llm_client(
     api_key: str,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-4o",
     temperature: float = 0.3,
     max_tokens: int = 1500,
 ) -> LLMClient:

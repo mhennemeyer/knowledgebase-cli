@@ -35,7 +35,10 @@ def search(
     faiss.normalize_L2(query_vec)
 
     search_k = top_k * 5 if book_filter else top_k
-    scores, indices = index.search(query_vec, min(search_k, index.ntotal))
+    effective_k = min(search_k, index.ntotal)
+    if effective_k == 0:
+        return []
+    scores, indices = index.search(query_vec, effective_k)
 
     results = []
     for score, idx in zip(scores[0], indices[0]):

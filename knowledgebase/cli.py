@@ -14,7 +14,7 @@ from pathlib import Path
 
 import typer
 
-from knowledgebase.config import KBConfig
+from knowledgebase.config import DEFAULT_KB_DIR, KBConfig
 
 app = typer.Typer(
     name="kb",
@@ -27,13 +27,18 @@ app = typer.Typer(
 def init(
     pdf_dir: str = typer.Argument(..., help="Verzeichnis mit PDF-/EPUB-Dateien"),
     name: str = typer.Option("default", "--name", "-n", help="Name der Knowledgebase"),
+    base_dir: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs (Standard: ~/Knowledgebase)"),
 ) -> None:
     """Bücher extrahieren und FAISS-Index aufbauen."""
     from knowledgebase.core.extract import extract_all_books
     from knowledgebase.core.chunk import build_all_chunks
     from knowledgebase.core.index import build_index
 
-    config = KBConfig(name=name, pdf_dir=Path(pdf_dir).expanduser().resolve())
+    config = KBConfig(
+        name=name,
+        pdf_dir=Path(pdf_dir).expanduser().resolve(),
+        base_dir=Path(base_dir).expanduser().resolve() if base_dir else DEFAULT_KB_DIR,
+    )
 
     typer.echo(f"📚 Initialisiere KB '{config.name}' aus {config.pdf_dir}...\n")
 
@@ -55,13 +60,95 @@ def init(
 
 
 @app.command()
+def add(
+    path: str = typer.Argument(..., help="Pfad zu einem Buch oder Verzeichnis mit Büchern"),
+    name: str = typer.Option("default", "--name", "-n", help="Name der Knowledgebase"),
+    base_dir: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs"),
+) -> None:
+    """Bestehende Knowledgebase um neue Bücher erweitern."""
+    from knowledgebase.core.extract import extract_single_book, SUPPORTED_EXTENSIONS
+    from knowledgebase.core.chunk import parse_markdown_to_chunks
+    from knowledgebase.core.index import append_to_index, load_index
+
+    config = KBConfig(
+        name=name,
+        base_dir=Path(base_dir).expanduser().resolve() if base_dir else DEFAULT_KB_DIR,
+    )
+
+    # Bestehende Bücher laden, um Duplikate zu vermeiden
+    try:
+        _, existing_chunks = load_index(config)
+        # Wir nutzen book_file für die Duplikat-Prüfung (ist der MD-Dateiname)
+        existing_md_files = {c.book_file for c in existing_chunks}
+    except FileNotFoundError:
+        typer.echo(f"❌ KB '{name}' nicht gefunden unter {config.base_dir}. Bitte zuerst `kb init` verwenden.")
+        raise typer.Exit(1)
+
+    input_path = Path(path).expanduser().resolve()
+    if input_path.is_dir():
+        books_to_scan = [
+            f for f in input_path.iterdir()
+            if f.suffix.lower() in SUPPORTED_EXTENSIONS
+        ]
+    elif input_path.is_file() and input_path.suffix.lower() in SUPPORTED_EXTENSIONS:
+        books_to_scan = [input_path]
+    else:
+        typer.echo(f"❌ Pfad {input_path} ist keine unterstützte Datei oder Verzeichnis (.pdf, .epub).")
+        raise typer.Exit(1)
+
+    if not books_to_scan:
+        typer.echo("Keine unterstützten Dateien gefunden.")
+        return
+
+    new_all_chunks = []
+    added_count = 0
+
+    typer.echo(f"➕ Erweitere KB '{name}'...\n")
+
+    for book_path in sorted(books_to_scan):
+        book_filename = book_path.name
+        from knowledgebase.core.extract import slugify
+        slug = slugify(book_filename)
+        md_filename = f"{slug}.md"
+
+        if md_filename in existing_md_files:
+            typer.echo(f"  ⏩ Überspringe '{book_filename}' (bereits im Index)")
+            continue
+
+        typer.echo(f"  📖 Extrahiere '{book_filename}'...")
+        try:
+            book_info = extract_single_book(book_path, config)
+            md_path = config.markdown_dir / book_info["md_file"]
+            
+            # Chunks erstellen
+            book_chunks = parse_markdown_to_chunks(md_path)
+            
+            # Die Chunks haben bereits book_file=md_filename (durch parse_markdown_to_chunks)
+            # Wir müssen nichts weiter tun.
+            
+            new_all_chunks.extend(book_chunks)
+            added_count += 1
+            typer.echo(f"     ✓ {len(book_chunks)} Chunks erzeugt")
+        except Exception as e:
+            typer.echo(f"     ❌ Fehler: {e}")
+
+    if new_all_chunks:
+        typer.echo(f"\n🚀 Berechne Embeddings für {len(new_all_chunks)} Chunks und aktualisiere Index...")
+        append_to_index(new_all_chunks, config)
+        typer.echo(f"\n✅ Erfolgreich {added_count} Bücher zur KB '{name}' hinzugefügt!")
+    else:
+        typer.echo("\nKeine neuen Bücher zum Hinzufügen gefunden.")
+
+
+@app.command()
 def search(
     query: str = typer.Argument(..., help="Suchanfrage"),
-    top: int = typer.Option(5, "--top", "-n", help="Anzahl Ergebnisse"),
+    top: int = typer.Option(10, "--top", "-n", help="Anzahl Ergebnisse"),
     book: str | None = typer.Option(None, "--book", "-b", help="Buch-Filter (Teilname)"),
     output_json: bool = typer.Option(False, "--json", "-j", help="JSON-Ausgabe"),
     name: str = typer.Option("default", "--name", help="Name der Knowledgebase"),
     pdf_dir: str | None = typer.Option(None, "--pdf-dir", help="PDF-Verzeichnis für Open-Links"),
+    base_dir_opt: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs"),
 ) -> None:
     """Semantische Suche in der Knowledgebase."""
     from knowledgebase.core.search import run_search
@@ -69,6 +156,7 @@ def search(
     config = KBConfig(
         name=name,
         pdf_dir=Path(pdf_dir).expanduser().resolve() if pdf_dir else None,
+        base_dir=Path(base_dir_opt).expanduser().resolve() if base_dir_opt else DEFAULT_KB_DIR,
     )
 
     results = run_search(query, config, top_k=top, book_filter=book)
@@ -111,11 +199,12 @@ def search(
 @app.command()
 def ask(
     question: str = typer.Argument(..., help="Frage an die Knowledgebase"),
-    top: int = typer.Option(5, "--top", "-n", help="Anzahl Kontext-Chunks"),
+    top: int = typer.Option(10, "--top", "-n", help="Anzahl Kontext-Chunks"),
     book: str | None = typer.Option(None, "--book", "-b", help="Buch-Filter"),
     output_json: bool = typer.Option(False, "--json", "-j", help="JSON-Ausgabe"),
     name: str = typer.Option("default", "--name", help="Name der Knowledgebase"),
     pdf_dir: str | None = typer.Option(None, "--pdf-dir", help="PDF-Verzeichnis für Open-Links"),
+    base_dir_opt: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs"),
 ) -> None:
     """Frage an die Knowledgebase stellen (RAG)."""
     from knowledgebase.core.answer import generate_answer
@@ -123,6 +212,7 @@ def ask(
     config = KBConfig(
         name=name,
         pdf_dir=Path(pdf_dir).expanduser().resolve() if pdf_dir else None,
+        base_dir=Path(base_dir_opt).expanduser().resolve() if base_dir_opt else DEFAULT_KB_DIR,
     )
 
     answer = generate_answer(question=question, config=config, top_k=top, book_filter=book)
@@ -159,11 +249,15 @@ def ask(
 @app.command(name="list")
 def list_books(
     name: str = typer.Option("default", "--name", help="Name der Knowledgebase"),
+    base_dir: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs"),
 ) -> None:
     """Alle indizierten Bücher anzeigen."""
     from knowledgebase.core.index import load_index
 
-    config = KBConfig(name=name)
+    config = KBConfig(
+        name=name,
+        base_dir=Path(base_dir).expanduser().resolve() if base_dir else DEFAULT_KB_DIR,
+    )
     _, chunks = load_index(config)
 
     books = {}
@@ -182,9 +276,13 @@ def list_books(
 @app.command()
 def status(
     name: str = typer.Option("default", "--name", help="Name der Knowledgebase"),
+    base_dir: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs"),
 ) -> None:
     """Index-Statistiken anzeigen."""
-    config = KBConfig(name=name)
+    config = KBConfig(
+        name=name,
+        base_dir=Path(base_dir).expanduser().resolve() if base_dir else DEFAULT_KB_DIR,
+    )
 
     if not config.index_path.exists():
         typer.echo(f"❌ KB '{name}' nicht gefunden. Bitte `kb init` ausführen.")
