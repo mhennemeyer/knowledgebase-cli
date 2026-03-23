@@ -8,8 +8,9 @@ class Chunk:
     text: str
     book: str           # Lesbarer Buchtitel
     book_file: str      # Original PDF-Dateiname
-    page: int           # Seitenzahl im PDF
+    page: int           # Seitenzahl im PDF (bei EPUB: Kapitelnummer)
     chunk_id: int = 0   # Eindeutige ID im Index
+    chapter_title: str | None = None  # Optionaler Kapitel-Titel (v.a. bei EPUB)
 
 
 @dataclass(frozen=True)

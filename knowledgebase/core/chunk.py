@@ -2,6 +2,7 @@
 Markdown → Chunks mit Metadaten.
 
 Parst extrahierte Markdown-Dateien und erstellt Chunks mit Buch- und Seitenreferenzen.
+Unterstützt Seiten-Referenzen (PDF) und Kapitel-Referenzen (EPUB).
 
 Basiert auf: LambdaPy/knowledgebase/build_index.py (parse_markdown_to_chunks)
 """
@@ -12,6 +13,12 @@ from knowledgebase.config import KBConfig
 from knowledgebase.models import Chunk
 
 
+# Pattern für Seiten- und Kapitel-Referenzen
+PAGE_PATTERN = re.compile(r"### Seite (\d+)\n")
+CHAPTER_PATTERN = re.compile(r"### Kapitel: (.+)\n")
+SECTION_PATTERN = re.compile(r"### (?:Seite (\d+)|Kapitel: (.+))\n")
+
+
 def parse_markdown_to_chunks(
     md_path: str | Path,
     chunk_size: int = 1500,
@@ -20,8 +27,10 @@ def parse_markdown_to_chunks(
     """
     Parst eine extrahierte Markdown-Datei und erstellt Chunks mit Metadaten.
 
+    Erkennt automatisch Seiten-Referenzen (PDF) und Kapitel-Referenzen (EPUB).
+
     Returns:
-        Liste von Chunk-Objekten mit book, book_file, page, text.
+        Liste von Chunk-Objekten mit book, book_file, page, text, chapter_title.
     """
     md_path = Path(md_path)
     content = md_path.read_text(encoding="utf-8")
@@ -29,29 +38,41 @@ def parse_markdown_to_chunks(
     filename = md_path.name
     book_name = filename.replace(".md", "").replace("-", " ").title()
 
-    page_pattern = re.compile(r"### Seite (\d+)\n")
-    parts = page_pattern.split(content)
+    parts = SECTION_PATTERN.split(content)
 
     chunks = []
     chunk_id = 0
-    for i in range(1, len(parts) - 1, 2):
-        page_num = int(parts[i])
-        page_text = parts[i + 1].strip()
-        if not page_text or len(page_text) < 50:
+    # parts[0] = Header, dann Gruppen von (page_num, chapter_title, text)
+    i = 1
+    while i < len(parts) - 2:
+        page_match = parts[i]       # Seiten-Nummer oder None
+        chapter_match = parts[i + 1]  # Kapitel-Titel oder None
+        section_text = parts[i + 2].strip()
+        i += 3
+
+        if not section_text or len(section_text) < 50:
             continue
 
-        if len(page_text) <= chunk_size:
+        page_num = int(page_match) if page_match else (chunk_id + 1)
+        chapter_title = chapter_match if chapter_match else None
+
+        # Bei Kapitel-Referenzen: page = fortlaufende Kapitelnummer
+        if chapter_match and not page_match:
+            page_num = len([c for c in chunks if c.chapter_title is not None]) + 1
+
+        if len(section_text) <= chunk_size:
             chunks.append(Chunk(
-                text=page_text,
+                text=section_text,
                 book=book_name,
                 book_file=filename,
                 page=page_num,
                 chunk_id=chunk_id,
+                chapter_title=chapter_title,
             ))
             chunk_id += 1
         else:
-            for start in range(0, len(page_text), chunk_size - chunk_overlap):
-                chunk_text = page_text[start:start + chunk_size]
+            for start in range(0, len(section_text), chunk_size - chunk_overlap):
+                chunk_text = section_text[start:start + chunk_size]
                 if len(chunk_text) < 50:
                     continue
                 chunks.append(Chunk(
@@ -60,6 +81,7 @@ def parse_markdown_to_chunks(
                     book_file=filename,
                     page=page_num,
                     chunk_id=chunk_id,
+                    chapter_title=chapter_title,
                 ))
                 chunk_id += 1
 
@@ -92,17 +114,18 @@ def build_all_chunks(config: KBConfig) -> list[Chunk]:
             chunk_size=config.chunk_size,
             chunk_overlap=config.chunk_overlap,
         )
-        # Fortlaufende globale IDs vergeben
-        renumbered = []
-        for chunk in file_chunks:
-            renumbered.append(Chunk(
+        renumbered = [
+            Chunk(
                 text=chunk.text,
                 book=chunk.book,
                 book_file=chunk.book_file,
                 page=chunk.page,
-                chunk_id=global_id,
-            ))
-            global_id += 1
+                chunk_id=global_id + idx,
+                chapter_title=chunk.chapter_title,
+            )
+            for idx, chunk in enumerate(file_chunks)
+        ]
+        global_id += len(renumbered)
         all_chunks.extend(renumbered)
 
     return all_chunks

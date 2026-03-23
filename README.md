@@ -1,15 +1,16 @@
 # Knowledgebase
 
-A CLI-based knowledgebase for e-books — semantic search with source references and deep links to open PDFs at the exact page.
+A CLI-based knowledgebase for e-books — semantic search and RAG answers with source references and deep links to open PDFs at the exact page.
 
 ## Features
 
 - **Semantic search** across all indexed books (FAISS + OpenAI Embeddings)
-- **Source references** with book title and page number
+- **RAG answers** — ask questions, get answers with source references (`kb ask`)
+- **PDF & EPUB support** — automatic format detection
+- **Source references** with book title, page number / chapter title
 - **Deep links** — open PDFs at the correct page (macOS)
 - **JSON output** for piping and AI agent integration
 - **Multiple knowledgebases** — independent named KBs (e.g. `--name dev`)
-- **PDF & EPUB support** (planned — currently PDF only)
 
 ## Prerequisites
 
@@ -48,11 +49,19 @@ All knowledgebase data is stored under `~/.kb/<name>/`.
 ### Build a Knowledgebase
 
 ```bash
-# Initialize from a directory of PDFs
+# Initialize from a directory of PDFs and/or EPUBs
 kb init ~/Books
 
 # Named knowledgebase
 kb init ~/Books --name dev
+```
+
+### Ask Questions (RAG)
+
+```bash
+kb ask "What are the functor laws?"
+kb ask "Explain monads" --json
+kb ask "clean code principles" --name dev
 ```
 
 ### Semantic Search
@@ -64,15 +73,6 @@ kb search "clean code" --book "Clean-Code"
 
 # JSON output (for scripts / AI agents)
 kb search "category theory" --json
-```
-
-### Ask Questions (RAG)
-
-> **Note:** RAG answer generation (`kb ask`) is under development (Phase 3).
-
-```bash
-kb ask "What are the functor laws?"
-kb ask "Explain monads" --json
 ```
 
 ### Other Commands
@@ -88,7 +88,26 @@ kb status
 kb open ~/Books/Clean-Code.pdf --page 42
 ```
 
-### JSON Output Example
+### JSON Output Examples
+
+```bash
+kb ask "What are monads?" --json
+```
+
+```json
+{
+  "answer": "Monads are a design pattern...",
+  "sources": [
+    {
+      "book": "Category Theory For Programmers",
+      "page": 42,
+      "chapter_title": null,
+      "score": 0.89,
+      "open_cmd": "open -a Skim '~/Books/CategoryTheoryForProgrammers.pdf' --args -page 42"
+    }
+  ]
+}
+```
 
 ```bash
 kb search "functor laws" --json
@@ -103,6 +122,7 @@ kb search "functor laws" --json
       "book": "Category Theory For Programmers",
       "book_file": "categorytheoryforprogrammers.md",
       "page": 42,
+      "chapter_title": null,
       "score": 0.89,
       "open_cmd": "open -a Skim '~/Books/CategoryTheoryForProgrammers.pdf' --args -page 42"
     }
@@ -118,19 +138,20 @@ knowledgebase/
 ├── config.py           # Configuration (paths, models)
 ├── models.py           # Data classes (Chunk, SearchResult, Answer)
 └── core/
-    ├── extract.py      # PDF → Markdown with page references
+    ├── extract.py      # PDF/EPUB → Markdown with page/chapter references
     ├── chunk.py        # Markdown → Chunks with metadata
     ├── index.py        # FAISS index (build, load, save)
     ├── search.py       # Semantic search
+    ├── answer.py       # RAG answer generation (LLM + sources)
     └── open_source.py  # Open PDF at page (macOS)
 ```
 
 ### Pipeline
 
 ```
-PDF → extract → Markdown → chunk → Chunks → index → FAISS
-                                                      ↓
-                             Query → search → Results + Sources
+PDF/EPUB → extract → Markdown → chunk → Chunks → index → FAISS
+                                                          ↓
+                    Question → search → Chunks → LLM → Answer + Sources
 ```
 
 ## Technology Stack
@@ -139,6 +160,7 @@ PDF → extract → Markdown → chunk → Chunks → index → FAISS
 |---|---|
 | Language | Python ≥ 3.11 |
 | PDF extraction | PyMuPDF (fitz) |
+| EPUB extraction | ebooklib + BeautifulSoup4 |
 | Embeddings | OpenAI text-embedding-3-small |
 | Vector index | FAISS (faiss-cpu) |
 | LLM (RAG) | OpenAI GPT-4o-mini |
@@ -150,9 +172,9 @@ PDF → extract → Markdown → chunk → Chunks → index → FAISS
 
 - [x] Phase 1: Core pipeline (extract, chunk, index, search)
 - [x] Phase 2: CLI with Typer
-- [ ] Phase 3: RAG answer generation (`kb ask`)
-- [ ] EPUB support (extraction abstraction + EPUB extractor)
-- [ ] Phase 4: Multi-KB, incremental updates, config file
+- [x] Phase 3: RAG answer generation (`kb ask`)
+- [x] EPUB support (extraction abstraction + EPUB extractor)
+- [ ] Phase 4: Multi-KB management, incremental updates, config file
 
 ## Development
 
@@ -162,6 +184,9 @@ pytest
 
 # Run a specific test file
 pytest tests/test_extract.py -v
+
+# Run all tests with verbose output
+pytest -v
 ```
 
 ## License

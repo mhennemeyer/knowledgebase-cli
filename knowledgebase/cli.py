@@ -25,11 +25,11 @@ app = typer.Typer(
 
 @app.command()
 def init(
-    pdf_dir: str = typer.Argument(..., help="Verzeichnis mit PDF-Dateien"),
+    pdf_dir: str = typer.Argument(..., help="Verzeichnis mit PDF-/EPUB-Dateien"),
     name: str = typer.Option("default", "--name", "-n", help="Name der Knowledgebase"),
 ) -> None:
-    """PDFs extrahieren und FAISS-Index aufbauen."""
-    from knowledgebase.core.extract import extract_all_pdfs
+    """Bücher extrahieren und FAISS-Index aufbauen."""
+    from knowledgebase.core.extract import extract_all_books
     from knowledgebase.core.chunk import build_all_chunks
     from knowledgebase.core.index import build_index
 
@@ -37,18 +37,15 @@ def init(
 
     typer.echo(f"📚 Initialisiere KB '{config.name}' aus {config.pdf_dir}...\n")
 
-    # PDFs extrahieren
-    typer.echo("1/3 PDFs extrahieren...")
-    results = extract_all_pdfs(config)
+    typer.echo("1/3 Bücher extrahieren...")
+    results = extract_all_books(config)
     for r in results:
-        typer.echo(f"  ✓ {r['pdf_name']} ({r['page_count']} Seiten)")
+        typer.echo(f"  ✓ {r['book_name']} ({r['page_count']} Seiten/Kapitel, {r['format']})")
 
-    # Chunks erstellen
     typer.echo("\n2/3 Chunks erstellen...")
     chunks = build_all_chunks(config)
     typer.echo(f"  {len(chunks)} Chunks erstellt")
 
-    # Index bauen
     typer.echo("\n3/3 FAISS-Index bauen...")
     build_index(chunks, config)
 
@@ -83,6 +80,7 @@ def search(
                 "book": r.chunk.book,
                 "book_file": r.chunk.book_file,
                 "page": r.chunk.page,
+                "chapter_title": r.chunk.chapter_title,
                 "score": r.score,
                 "open_cmd": r.open_cmd,
             }
@@ -97,7 +95,12 @@ def search(
 
         for i, r in enumerate(results, start=1):
             typer.echo(f"━━━ Ergebnis {i} (Score: {r.score:.3f}) ━━━")
-            typer.echo(f"📖 {r.chunk.book}  |  Seite {r.chunk.page}")
+            location = (
+                f"Kapitel: {r.chunk.chapter_title}"
+                if r.chunk.chapter_title
+                else f"Seite {r.chunk.page}"
+            )
+            typer.echo(f"📖 {r.chunk.book}  |  {location}")
             if r.open_cmd:
                 typer.echo(f"🔗 {r.open_cmd}")
             typer.echo("")
@@ -109,12 +112,48 @@ def search(
 def ask(
     question: str = typer.Argument(..., help="Frage an die Knowledgebase"),
     top: int = typer.Option(5, "--top", "-n", help="Anzahl Kontext-Chunks"),
+    book: str | None = typer.Option(None, "--book", "-b", help="Buch-Filter"),
     output_json: bool = typer.Option(False, "--json", "-j", help="JSON-Ausgabe"),
     name: str = typer.Option("default", "--name", help="Name der Knowledgebase"),
+    pdf_dir: str | None = typer.Option(None, "--pdf-dir", help="PDF-Verzeichnis für Open-Links"),
 ) -> None:
     """Frage an die Knowledgebase stellen (RAG)."""
-    typer.echo("⚠️  RAG-Antwortgenerierung ist noch nicht implementiert (Phase 3).")
-    typer.echo("   Verwende `kb search` für semantische Suche.")
+    from knowledgebase.core.answer import generate_answer
+
+    config = KBConfig(
+        name=name,
+        pdf_dir=Path(pdf_dir).expanduser().resolve() if pdf_dir else None,
+    )
+
+    answer = generate_answer(question=question, config=config, top_k=top, book_filter=book)
+
+    if output_json:
+        sources = [
+            {
+                "book": s.chunk.book,
+                "page": s.chunk.page,
+                "chapter_title": s.chunk.chapter_title,
+                "score": s.score,
+                "open_cmd": s.open_cmd,
+            }
+            for s in answer.sources
+        ]
+        data = {"answer": answer.text, "sources": sources}
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"\n💬 Antwort:\n")
+        typer.echo(answer.text)
+        if answer.sources:
+            typer.echo(f"\n📚 Quellen ({len(answer.sources)}):\n")
+            for i, s in enumerate(answer.sources, start=1):
+                location = (
+                    f"Kapitel: {s.chunk.chapter_title}"
+                    if s.chunk.chapter_title
+                    else f"Seite {s.chunk.page}"
+                )
+                typer.echo(f"  {i}. {s.chunk.book} – {location} (Score: {s.score:.3f})")
+                if s.open_cmd:
+                    typer.echo(f"     🔗 {s.open_cmd}")
 
 
 @app.command(name="list")
