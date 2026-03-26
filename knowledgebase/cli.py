@@ -28,6 +28,7 @@ def init(
     pdf_dir: str = typer.Argument(..., help="Verzeichnis mit PDF-/EPUB-Dateien"),
     name: str = typer.Option("default", "--name", "-n", help="Name der Knowledgebase"),
     base_dir: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs (Standard: ~/Knowledgebase)"),
+    no_vision: bool = typer.Option(False, "--no-vision", help="Vision-Analyse deaktivieren (Standard: aktiviert)"),
 ) -> None:
     """Bücher extrahieren und FAISS-Index aufbauen."""
     from knowledgebase.core.extract import extract_all_books
@@ -38,9 +39,10 @@ def init(
         name=name,
         pdf_dir=Path(pdf_dir).expanduser().resolve(),
         base_dir=Path(base_dir).expanduser().resolve() if base_dir else DEFAULT_KB_DIR,
+        use_vision=not no_vision,
     )
 
-    typer.echo(f"📚 Initialisiere KB '{config.name}' aus {config.pdf_dir}...\n")
+    typer.echo(f"📚 Initialisiere KB '{config.name}' aus {config.pdf_dir} (Vision: {'An' if config.use_vision else 'Aus'})...\n")
 
     typer.echo("1/3 Bücher extrahieren...")
     results = extract_all_books(config)
@@ -64,6 +66,7 @@ def add(
     path: str = typer.Argument(..., help="Pfad zu einem Buch oder Verzeichnis mit Büchern"),
     name: str = typer.Option("default", "--name", "-n", help="Name der Knowledgebase"),
     base_dir: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs"),
+    no_vision: bool = typer.Option(False, "--no-vision", help="Vision-Analyse deaktivieren"),
 ) -> None:
     """Bestehende Knowledgebase um neue Bücher erweitern."""
     from knowledgebase.core.extract import extract_single_book, SUPPORTED_EXTENSIONS
@@ -73,6 +76,7 @@ def add(
     config = KBConfig(
         name=name,
         base_dir=Path(base_dir).expanduser().resolve() if base_dir else DEFAULT_KB_DIR,
+        use_vision=not no_vision,
     )
 
     # Bestehende Bücher laden, um Duplikate zu vermeiden
@@ -121,7 +125,7 @@ def add(
             md_path = config.markdown_dir / book_info["md_file"]
             
             # Chunks erstellen
-            book_chunks = parse_markdown_to_chunks(md_path)
+            book_chunks = parse_markdown_to_chunks(md_path, config=config)
             
             # Die Chunks haben bereits book_file=md_filename (durch parse_markdown_to_chunks)
             # Wir müssen nichts weiter tun.
@@ -171,6 +175,7 @@ def search(
                 "chapter_title": r.chunk.chapter_title,
                 "score": r.score,
                 "open_cmd": r.open_cmd,
+                "images": r.chunk.image_paths,
             }
             for r in results
         ]
@@ -225,10 +230,15 @@ def ask(
                 "chapter_title": s.chunk.chapter_title,
                 "score": s.score,
                 "open_cmd": s.open_cmd,
+                "images": s.chunk.image_paths,
             }
             for s in answer.sources
         ]
-        data = {"answer": answer.text, "sources": sources}
+        data = {
+            "answer": answer.text, 
+            "sources": sources,
+            "images": answer.images # Base64 Map
+        }
         typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
     else:
         typer.echo(f"\n💬 Antwort:\n")
@@ -242,6 +252,8 @@ def ask(
                     else f"Seite {s.chunk.page}"
                 )
                 typer.echo(f"  {i}. {s.chunk.book} – {location} (Score: {s.score:.3f})")
+                if s.chunk.image_paths:
+                    typer.echo(f"     🖼️  Bilder: {', '.join(s.chunk.image_paths)}")
                 if s.open_cmd:
                     typer.echo(f"     🔗 {s.open_cmd}")
 
@@ -292,12 +304,14 @@ def status(
     index, chunks = load_index(config)
 
     books = {c.book_file for c in chunks}
+    total_images = sum(len(c.image_paths) for c in chunks)
     typer.echo(f"\n📊 KB '{name}'")
-    typer.echo(f"   Bücher:  {len(books)}")
-    typer.echo(f"   Chunks:  {len(chunks)}")
+    typer.echo(f"   Bücher:   {len(books)}")
+    typer.echo(f"   Chunks:   {len(chunks)}")
+    typer.echo(f"   Bilder:   {total_images}")
     typer.echo(f"   Vektoren: {index.ntotal}")
-    typer.echo(f"   Index:   {config.index_path}")
-    typer.echo(f"   Größe:   {config.index_path.stat().st_size / 1024 / 1024:.1f} MB")
+    typer.echo(f"   Index:    {config.index_path}")
+    typer.echo(f"   Größe:    {config.index_path.stat().st_size / 1024 / 1024:.1f} MB")
 
 
 @app.command(name="open")

@@ -21,12 +21,13 @@ def _make_md(pages: list[tuple[int, str]]) -> str:
 
 
 def test_parse_simple_pages(tmp_path):
+    config = KBConfig(name="test", base_dir=tmp_path / ".kb")
     md_file = tmp_path / "test-book.md"
     md_file.write_text(
         _make_md([(1, "A" * 100), (2, "B" * 100)]),
         encoding="utf-8",
     )
-    chunks = parse_markdown_to_chunks(md_file)
+    chunks = parse_markdown_to_chunks(md_file, config=config)
     assert len(chunks) == 2
     assert chunks[0].page == 1
     assert chunks[1].page == 2
@@ -35,35 +36,38 @@ def test_parse_simple_pages(tmp_path):
 
 
 def test_parse_skips_short_pages(tmp_path):
+    config = KBConfig(name="test", base_dir=tmp_path / ".kb")
     md_file = tmp_path / "test-book.md"
     md_file.write_text(
         _make_md([(1, "Short"), (2, "A" * 100)]),
         encoding="utf-8",
     )
-    chunks = parse_markdown_to_chunks(md_file)
+    chunks = parse_markdown_to_chunks(md_file, config=config)
     assert len(chunks) == 1
     assert chunks[0].page == 2
 
 
 def test_parse_large_page_splits_with_overlap(tmp_path):
+    config = KBConfig(name="test", base_dir=tmp_path / ".kb", chunk_size=1500, chunk_overlap=200)
     md_file = tmp_path / "test-book.md"
     large_text = "A" * 3000
     md_file.write_text(
         _make_md([(1, large_text)]),
         encoding="utf-8",
     )
-    chunks = parse_markdown_to_chunks(md_file, chunk_size=1500, chunk_overlap=200)
+    chunks = parse_markdown_to_chunks(md_file, config=config)
     assert len(chunks) >= 2
     assert all(c.page == 1 for c in chunks)
 
 
 def test_parse_chunk_ids_sequential(tmp_path):
+    config = KBConfig(name="test", base_dir=tmp_path / ".kb")
     md_file = tmp_path / "test-book.md"
     md_file.write_text(
         _make_md([(1, "A" * 100), (2, "B" * 100), (3, "C" * 100)]),
         encoding="utf-8",
     )
-    chunks = parse_markdown_to_chunks(md_file)
+    chunks = parse_markdown_to_chunks(md_file, config=config)
     assert [c.chunk_id for c in chunks] == [0, 1, 2]
 
 

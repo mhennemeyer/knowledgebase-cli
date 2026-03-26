@@ -2,38 +2,47 @@
 
 ## Vision
 
-Eine ubiquitär auf dem Rechner verfügbare, CLI-basierte Knowledgebase (KB) für E-Books (PDFs).
+Eine ubiquitär auf dem Rechner verfügbare, CLI-basierte Knowledgebase (KB) für E-Books (PDFs & EPUBs).
 Zielgruppen: Mensch (Terminal) und KI-Agent (programmatischer Zugriff).
 
 **Kernfähigkeiten:**
 - Semantische Suche über alle indizierten Bücher
-- Fachliche Antworten mit exakten Quellenangaben (Buch, Seite)
-- Deep-Link zum Öffnen des PDFs auf der richtigen Seite (`open` / Preview.app)
+- RAG-Antworten mit exakten Quellenangaben (Buch, Seite/Kapitel)
+- Vision AI – Bilder aus Büchern extrahieren, beschreiben und indexieren
+- Deep-Link zum Öffnen des PDFs auf der richtigen Seite (Skim)
 - Unix-artiges CLI mit Pipes, JSON-Output, Filtern
-- Mehrere unabhängige Knowledgebases möglich (z. B. "dev", "math", "personal")
+- Mehrere unabhängige Knowledgebases möglich (z. B. `--name fp`, `--name cat`)
+- PDF- und EPUB-Support mit automatischer Format-Erkennung
 
 ## Architektur
 
 ```
 knowledgebase/
-├── cli.py                  # Haupt-CLI Entry Point (kb)
+├── cli.py                  # Typer CLI Entry Point (kb)
+├── config.py               # KBConfig Dataclass (Pfade, Modelle, Vision-Flag)
+├── models.py               # Frozen Dataclasses: Chunk, SearchResult, Answer
 ├── core/
 │   ├── __init__.py
-│   ├── extract.py          # PDF → Markdown mit Seitenreferenzen
-│   ├── chunk.py            # Markdown → Chunks mit Metadaten
-│   ├── index.py            # FAISS-Index bauen & verwalten
-│   ├── search.py           # Semantische Suche
-│   ├── answer.py           # RAG: Frage → Antwort + Quellen (LLM)
-│   └── open_source.py      # PDF auf Seite öffnen (macOS open -a Preview)
-├── config.py               # Konfiguration (Pfade, Modelle, API-Keys)
-├── models.py               # Datenklassen (Chunk, SearchResult, Source)
+│   ├── extract.py          # PDF/EPUB → Markdown mit Seiten-/Kapitelreferenzen + Vision-Bildextraktion
+│   ├── chunk.py            # Markdown → Chunks mit Metadaten (Seite, Kapitel, Bilder)
+│   ├── index.py            # FAISS-Index bauen, laden, speichern (OpenAI Embeddings)
+│   ├── search.py           # Semantische Suche mit Buch-Filter
+│   ├── answer.py           # RAG: Frage → Antwort + Quellen + Bilder (LLM)
+│   ├── vision.py           # Vision AI: Bildbeschreibung via GPT-4o, Base64-Encoding
+│   └── open_source.py      # PDF auf Seite öffnen (macOS Skim)
 ├── tests/
+│   ├── conftest.py         # Shared Fixtures (Fake-Embeddings, Test-PDF/EPUB-Generatoren)
 │   ├── test_extract.py
+│   ├── test_extract_epub.py
 │   ├── test_chunk.py
+│   ├── test_index.py
 │   ├── test_search.py
-│   └── test_cli.py
-├── .agent/
-│   └── specification.md    # Diese Datei
+│   ├── test_answer.py
+│   ├── test_open_source.py
+│   ├── test_cli.py
+│   ├── test_e2e_pipeline.py  # Stufe-1 E2E-Tests (Pipeline ohne externe APIs)
+│   ├── test_e2e_add.py       # E2E-Tests für kb add
+│   └── test_vision_feature.py
 ├── pyproject.toml           # Projekt-Metadaten, CLI Entry Point
 ├── requirements.txt
 └── README.md
@@ -42,40 +51,67 @@ knowledgebase/
 ### Ports & Adapters
 
 - **Port (Eingang):** CLI (`kb`-Kommando), Python-API
-- **Port (Ausgang):** Embedding-Provider (OpenAI), LLM-Provider (OpenAI), Dateisystem
-- **Adapter:** OpenAI-Client, FAISS, PyMuPDF, macOS `open`-Kommando
+- **Port (Ausgang):** Embedding-Provider (OpenAI), LLM-Provider (OpenAI), Vision AI (GPT-4o), Dateisystem
+- **Adapter:** OpenAI-Client (Embedding + LLM + Vision), FAISS, PyMuPDF, ebooklib, macOS `open`-Kommando
+- **Dependency Injection:** LLM-Client als Callable injiziert (Higher-Order Function gemäß functional.md)
 
 ## CLI Design
 
 ```bash
-# Knowledgebase initialisieren / PDFs indizieren
-kb init ~/Books                     # PDFs extrahieren + Index bauen
-kb init ~/Books --name dev          # Benannte KB erstellen
-kb add ~/Books/new-book.pdf         # Einzelnes Buch hinzufügen
-kb list                             # Alle indizierten Bücher anzeigen
+# Knowledgebase initialisieren / Bücher indizieren
+kb init ~/Books                          # PDFs/EPUBs extrahieren + Index bauen (mit Vision)
+kb init ~/Books --name dev               # Benannte KB erstellen
+kb init ~/Books --no-vision              # Ohne Vision-Analyse (spart Kosten/Zeit)
+kb init ~/Books --base-dir /custom/path  # Eigenes Basis-Verzeichnis
+
+# Einzelne Bücher hinzufügen
+kb add ~/Books/new-book.pdf              # Einzelnes Buch hinzufügen
+kb add ~/Books/new-books/ --name dev     # Verzeichnis zu benannter KB hinzufügen
+kb add ~/Books/book.epub --no-vision     # Ohne Vision-Analyse
 
 # Suche (semantisch)
-kb search "functor laws"            # Top-5 relevante Passagen
-kb search "monad tutorial" -n 10    # Mehr Ergebnisse
+kb search "functor laws"                 # Top-10 relevante Passagen
+kb search "monad tutorial" --top 20      # Mehr Ergebnisse
 kb search "clean code" --book "Clean-Code"  # Buch-Filter
-kb search "category theory" --json  # JSON-Output für Piping/Agent
+kb search "category theory" --json       # JSON-Output für Piping/Agent
 
-# Fragen (RAG – Antwort + Quellen)
+# Fragen (RAG – Antwort + Quellen + Bilder)
 kb ask "Was sind die Funktor-Gesetze?"
-kb ask "Erkläre Monaden" --json     # Strukturierte Antwort für Agent
+kb ask "Erkläre Monaden" --json          # Strukturierte Antwort für Agent
+kb ask "clean code" --name arch          # Spezifische KB abfragen
 
 # Quelle öffnen
-kb open "Clean-Code.pdf" --page 42  # PDF auf Seite 42 öffnen
-kb open --result 1                  # Letztes Suchergebnis #1 öffnen
+kb open "Clean-Code.pdf" --page 42       # PDF auf Seite 42 öffnen
 
 # Verwaltung
-kb status                           # Index-Statistiken
-kb rebuild                          # Index neu aufbauen
-kb config                           # Konfiguration anzeigen
+kb list                                  # Alle indizierten Bücher anzeigen
+kb list --name fp                        # Bücher einer benannten KB
+kb status                                # Index-Statistiken
+kb status --name fp                      # Status einer benannten KB
 ```
 
 ### JSON-Output (für KI-Agent)
 
+#### `kb ask --json`
+```json
+{
+  "answer": "Monads are a design pattern...",
+  "sources": [
+    {
+      "book": "Category Theory For Programmers",
+      "page": 42,
+      "chapter_title": null,
+      "score": 0.89,
+      "open_cmd": "open -a Skim '~/Books/CategoryTheoryForProgrammers.pdf' --args -page 42"
+    }
+  ],
+  "images": {
+    "images/categorytheoryforprogrammers/img_p42_0.png": "<base64>"
+  }
+}
+```
+
+#### `kb search --json`
 ```json
 {
   "query": "functor laws",
@@ -83,10 +119,11 @@ kb config                           # Konfiguration anzeigen
     {
       "text": "A functor must preserve identity and composition...",
       "book": "Category Theory For Programmers",
-      "book_file": "CategoryTheoryForProgrammers.pdf",
+      "book_file": "categorytheoryforprogrammers.md",
       "page": 42,
+      "chapter_title": null,
       "score": 0.89,
-      "open_cmd": "open -a Preview 'CategoryTheoryForProgrammers.pdf' --args -p 42"
+      "open_cmd": "open -a Skim '~/Books/CategoryTheoryForProgrammers.pdf' --args -page 42"
     }
   ]
 }
@@ -98,49 +135,48 @@ kb config                           # Konfiguration anzeigen
 @dataclass(frozen=True)
 class Chunk:
     text: str
-    book: str           # Lesbarer Buchtitel
-    book_file: str      # Original PDF-Dateiname
-    page: int           # Seitenzahl im PDF
-    chunk_id: int       # Eindeutige ID im Index
+    book: str              # Lesbarer Buchtitel
+    book_file: str         # Original Dateiname
+    page: int              # Seitenzahl (PDF) oder Kapitelnummer (EPUB)
+    chunk_id: int = 0      # Eindeutige ID im Index
+    chapter_title: str | None = None  # Optionaler Kapitel-Titel (v.a. bei EPUB)
+    image_paths: list[str] = field(default_factory=list)  # Relative Pfade zu Bildern
 
 @dataclass(frozen=True)
 class SearchResult:
     chunk: Chunk
     score: float
-    open_cmd: str       # macOS-Kommando zum Öffnen
+    open_cmd: str = ""     # macOS-Kommando zum Öffnen
 
 @dataclass(frozen=True)
 class Answer:
-    text: str           # Fachliche Antwort
-    sources: list[SearchResult]  # Verwendete Quellen
+    text: str              # Fachliche Antwort
+    sources: list[SearchResult] = field(default_factory=list)
+    images: dict[str, str] = field(default_factory=dict)  # Pfad -> Base64
 ```
 
-## Implementierungsplan
+## Implementierungsstand
 
-### Phase 1 – Core Pipeline (MVP)
-1. **Projektstruktur** aufsetzen (`pyproject.toml`, `requirements.txt`, Verzeichnisse)
-2. **config.py** – Konfiguration: PDF-Verzeichnis, Index-Verzeichnis, API-Key, Modelle
-3. **models.py** – Datenklassen `Chunk`, `SearchResult`, `Answer`
-4. **core/extract.py** – PDF → Markdown (aus LambdaPy portiert, verallgemeinert)
-5. **core/chunk.py** – Markdown → Chunks mit Metadaten
-6. **core/index.py** – FAISS-Index bauen, laden, speichern
-7. **core/search.py** – Semantische Suche mit Filtern
-8. **core/open_source.py** – `open -a Preview <pdf> --args -p <page>` 
-9. **Tests** für alle Core-Module
+### Abgeschlossen ✅
 
-### Phase 2 – CLI
-10. **cli.py** – Click/Typer-basiertes CLI mit allen Subcommands
-11. **pyproject.toml** – `[project.scripts] kb = "knowledgebase.cli:app"` Entry Point
-12. **Installation** – `pip install -e .` → `kb` systemweit verfügbar
+- **Phase 1 – Core Pipeline:** extract (PDF+EPUB), chunk, index (FAISS + OpenAI Embeddings), search, open_source
+- **Phase 2 – CLI:** Typer-basiertes CLI mit allen Subcommands (init, search, ask, add, list, status, open)
+- **Phase 3 – RAG:** answer.py mit LLM-basierter Antwortgenerierung, Quellenangaben, DI via Higher-Order Functions
+- **EPUB-Support:** Extraktions-Abstraktion mit automatischer Format-Erkennung, EPUB-Extraktor mit Kapitelreferenzen
+- **Vision AI:** Bildextraktion aus PDFs/EPUBs, GPT-4o Vision-Beschreibung, Indexierung, Base64 in RAG-Antworten
+- **Multi-KB:** Benannte Knowledgebases (`--name`), eigenes Basis-Verzeichnis (`--base-dir`)
+- **Inkrementelle Updates:** `kb add` für einzelne Bücher oder Verzeichnisse
+- **Model-Upgrades:** text-embedding-3-large (3072d), GPT-4o, top_k=10
+- **Tests:** Unit-Tests für alle Module + E2E-Pipeline-Tests mit programmatischen Fixtures
+- **LambdaPy-Migration:** 4 thematische KBs (fp, cat, arch, ai) aus 43 Büchern
 
-### Phase 3 – RAG (Frage-Antwort)
-13. **core/answer.py** – LLM-basierte Antwortgenerierung mit Quellenangabe
-14. **`kb ask`** Subcommand
+### Offen
 
-### Phase 4 – Multi-KB & Erweiterungen
-15. Mehrere benannte Knowledgebases (`--name`)
-16. Inkrementelles Hinzufügen (`kb add`)
-17. Konfigurationsdatei (`~/.kb/config.toml`)
+- Konfigurationsdatei (`~/Knowledgebase/config.toml`)
+- `kb rebuild` – Index komplett neu aufbauen
+- `kb config` – Konfiguration anzeigen/bearbeiten
+- API-Integration-E2E-Tests (Stufe 2 mit echtem API-Key)
+- CLI-Subprocess-E2E-Tests (Stufe 3)
 
 ## Technologie-Stack
 
@@ -148,10 +184,12 @@ class Answer:
 |---|---|
 | Sprache | Python ≥ 3.11 |
 | PDF-Extraktion | PyMuPDF (fitz) |
-| Embeddings | OpenAI text-embedding-3-small |
-| Vektor-Index | FAISS (faiss-cpu) |
-| LLM (RAG) | OpenAI GPT-4o-mini |
-| CLI-Framework | Typer (oder Click) |
+| EPUB-Extraktion | ebooklib + BeautifulSoup4 |
+| Embeddings | OpenAI text-embedding-3-large (3072d) |
+| Vektor-Index | FAISS (faiss-cpu), IndexFlatIP |
+| LLM (RAG) | OpenAI GPT-4o |
+| Vision AI | OpenAI GPT-4o Vision |
+| CLI-Framework | Typer |
 | Tests | pytest |
 | Paketierung | pyproject.toml + pip install -e . |
 
@@ -163,9 +201,9 @@ Basiert auf der Knowledgebase-Implementierung im LambdaPy-Projekt:
 - `knowledgebase/search.py` → `core/search.py`
 
 Verallgemeinerungen gegenüber LambdaPy:
-- Konfigurierbare Pfade (nicht hardcoded)
+- PDF- und EPUB-Support mit automatischer Format-Erkennung
+- Vision AI für Bilder in Büchern
+- Konfigurierbare Pfade und benannte KBs
 - CLI statt einzelner Skripte
-- Deep-Links zum PDF-Öffnen
-- RAG-Antwortgenerierung
-- Multi-KB-Support
+- RAG-Antwortgenerierung mit Quellenangaben und Bildern
 - Systemweite Installation via `pip install -e .`

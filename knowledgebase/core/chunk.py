@@ -17,23 +17,26 @@ from knowledgebase.models import Chunk
 PAGE_PATTERN = re.compile(r"### Seite (\d+)\n")
 CHAPTER_PATTERN = re.compile(r"### Kapitel: (.+)\n")
 SECTION_PATTERN = re.compile(r"### (?:Seite (\d+)|Kapitel: (.+))\n")
+IMAGE_PLACEHOLDER_PATTERN = re.compile(r"!\[\[(images/.+?)\]\]")
 
 
 def parse_markdown_to_chunks(
     md_path: str | Path,
-    chunk_size: int = 1500,
-    chunk_overlap: int = 200,
+    config: KBConfig,
 ) -> list[Chunk]:
     """
     Parst eine extrahierte Markdown-Datei und erstellt Chunks mit Metadaten.
 
     Erkennt automatisch Seiten-Referenzen (PDF) und Kapitel-Referenzen (EPUB).
+    Lädt Bildbeschreibungen (.desc) und fügt sie in den Chunk-Text ein.
 
     Returns:
         Liste von Chunk-Objekten mit book, book_file, page, text, chapter_title.
     """
     md_path = Path(md_path)
     content = md_path.read_text(encoding="utf-8")
+    chunk_size = config.chunk_size
+    chunk_overlap = config.chunk_overlap
 
     filename = md_path.name
     book_name = filename.replace(".md", "").replace("-", " ").title()
@@ -60,29 +63,42 @@ def parse_markdown_to_chunks(
         if chapter_match and not page_match:
             page_num = len([c for c in chunks if c.chapter_title is not None]) + 1
 
-        if len(section_text) <= chunk_size:
-            chunks.append(Chunk(
-                text=section_text,
+        # Hilfsfunktion zur Chunk-Erstellung mit Vision-Integration
+        def create_chunk(text: str, cid: int) -> Chunk:
+            # Bild-Platzhalter finden
+            image_paths = IMAGE_PLACEHOLDER_PATTERN.findall(text)
+            
+            # Bildbeschreibungen injizieren
+            enriched_text = text
+            for img_rel_path in image_paths:
+                img_full_path = config.kb_dir / img_rel_path
+                desc_path = img_full_path.with_suffix(".desc")
+                if desc_path.exists():
+                    description = desc_path.read_text(encoding="utf-8")
+                    enriched_text = enriched_text.replace(
+                        f"![[{img_rel_path}]]",
+                        f"![[{img_rel_path}]]\n[BILD-BESCHREIBUNG: {description}]\n"
+                    )
+            
+            return Chunk(
+                text=enriched_text,
                 book=book_name,
                 book_file=filename,
                 page=page_num,
-                chunk_id=chunk_id,
+                chunk_id=cid,
                 chapter_title=chapter_title,
-            ))
+                image_paths=image_paths
+            )
+
+        if len(section_text) <= chunk_size:
+            chunks.append(create_chunk(section_text, chunk_id))
             chunk_id += 1
         else:
             for start in range(0, len(section_text), chunk_size - chunk_overlap):
                 chunk_text = section_text[start:start + chunk_size]
                 if len(chunk_text) < 50:
                     continue
-                chunks.append(Chunk(
-                    text=chunk_text,
-                    book=book_name,
-                    book_file=filename,
-                    page=page_num,
-                    chunk_id=chunk_id,
-                    chapter_title=chapter_title,
-                ))
+                chunks.append(create_chunk(chunk_text, chunk_id))
                 chunk_id += 1
 
     return chunks
@@ -111,8 +127,7 @@ def build_all_chunks(config: KBConfig) -> list[Chunk]:
     for md_file in md_files:
         file_chunks = parse_markdown_to_chunks(
             md_file,
-            chunk_size=config.chunk_size,
-            chunk_overlap=config.chunk_overlap,
+            config=config,
         )
         renumbered = [
             Chunk(
@@ -122,6 +137,7 @@ def build_all_chunks(config: KBConfig) -> list[Chunk]:
                 page=chunk.page,
                 chunk_id=global_id + idx,
                 chapter_title=chunk.chapter_title,
+                image_paths=chunk.image_paths,
             )
             for idx, chunk in enumerate(file_chunks)
         ]

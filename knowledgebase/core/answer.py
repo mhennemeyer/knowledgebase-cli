@@ -87,7 +87,7 @@ def generate_answer(
     llm_client: LLMClient | None = None,
 ) -> Answer:
     """
-    Orchestrierung: Search → Prompt → LLM → Answer mit Quellen.
+    Orchestrierung: Search → Prompt → LLM → Answer mit Quellen und Bildern.
 
     Args:
         question: Die Frage an die Knowledgebase.
@@ -97,10 +97,11 @@ def generate_answer(
         llm_client: Injizierter LLM-Client. Falls None, wird ein OpenAI-Client erstellt.
 
     Returns:
-        Answer mit Antworttext und Quellen.
+        Answer mit Antworttext, Quellen und Base64-Bildern.
     """
     from knowledgebase.core.search import run_search
     from knowledgebase.config import get_openai_api_key
+    from knowledgebase.core.vision import encode_image
 
     results = run_search(query=question, config=config, top_k=top_k, book_filter=book_filter)
 
@@ -109,6 +110,17 @@ def generate_answer(
             text="Keine relevanten Quellen gefunden. Bitte überprüfe die Frage oder den Index.",
             sources=results,
         )
+
+    # Bilder aus den Quellen sammeln und in Base64 umwandeln
+    images = {}
+    for r in results:
+        for img_rel_path in r.chunk.image_paths:
+            img_full_path = config.kb_dir / img_rel_path
+            if img_full_path.exists() and img_rel_path not in images:
+                try:
+                    images[img_rel_path] = encode_image(img_full_path)
+                except Exception as e:
+                    print(f"Fehler beim Laden von Bild {img_rel_path}: {e}")
 
     if llm_client is None:
         api_key = get_openai_api_key()
@@ -121,4 +133,4 @@ def generate_answer(
     user_prompt = build_user_prompt(question, results)
     answer_text = llm_client(system_prompt, user_prompt)
 
-    return Answer(text=answer_text, sources=results)
+    return Answer(text=answer_text, sources=results, images=images)

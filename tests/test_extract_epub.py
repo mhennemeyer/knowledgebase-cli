@@ -152,7 +152,9 @@ def test_extract_all_books_empty_dir(tmp_path):
 def test_chunk_parses_chapter_references(tmp_path):
     """Prüft, dass Kapitel-Referenzen aus EPUB korrekt gechunked werden."""
     from knowledgebase.core.chunk import parse_markdown_to_chunks
+    from knowledgebase.config import KBConfig
 
+    config = KBConfig(name="test", base_dir=tmp_path / ".kb")
     md_file = tmp_path / "epub-book.md"
     md_file.write_text(
         "# Test\n---\n"
@@ -161,8 +163,7 @@ def test_chunk_parses_chapter_references(tmp_path):
         encoding="utf-8",
     )
 
-    chunks = parse_markdown_to_chunks(md_file)
-
+    chunks = parse_markdown_to_chunks(md_file, config=config)
     assert len(chunks) == 2
     assert chunks[0].chapter_title == "Introduction"
     assert chunks[1].chapter_title == "Monads"

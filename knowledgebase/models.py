@@ -11,6 +11,7 @@ class Chunk:
     page: int           # Seitenzahl im PDF (bei EPUB: Kapitelnummer)
     chunk_id: int = 0   # Eindeutige ID im Index
     chapter_title: str | None = None  # Optionaler Kapitel-Titel (v.a. bei EPUB)
+    image_paths: list[str] = field(default_factory=list) # Relative Pfade zu Bildern
 
 
 @dataclass(frozen=True)
@@ -26,3 +27,4 @@ class Answer:
     """Eine RAG-generierte Antwort mit Quellenangaben."""
     text: str
     sources: list[SearchResult] = field(default_factory=list)
+    images: dict[str, str] = field(default_factory=dict) # Pfad -> Base64

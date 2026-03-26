@@ -22,11 +22,17 @@ class KBConfig:
     llm_model: str = LLM_MODEL
     chunk_size: int = CHUNK_SIZE
     chunk_overlap: int = CHUNK_OVERLAP
+    use_vision: bool = True  # Standardmäßig mit Vision-Analyse
 
     @property
     def kb_dir(self) -> Path:
         """Verzeichnis dieser KB-Instanz."""
         return self.base_dir / self.name
+
+    @property
+    def images_dir(self) -> Path:
+        """Verzeichnis für extrahierte Bilder."""
+        return self.kb_dir / "images"
 
     @property
     def markdown_dir(self) -> Path:
@@ -52,6 +58,7 @@ class KBConfig:
         """Erstellt alle benötigten Verzeichnisse."""
         self.markdown_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.images_dir.mkdir(parents=True, exist_ok=True)
 
 
 def get_openai_api_key() -> str:

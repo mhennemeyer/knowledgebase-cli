@@ -6,11 +6,13 @@ A CLI-based knowledgebase for e-books — semantic search and RAG answers with s
 
 - **Semantic search** across all indexed books (FAISS + OpenAI Embeddings)
 - **RAG answers** — ask questions, get answers with source references (`kb ask`)
+- **Vision AI** — extract and describe images from books (GPT-4o Vision), included in RAG answers as base64
 - **PDF & EPUB support** — automatic format detection
 - **Source references** with book title, page number / chapter title
-- **Deep links** — open PDFs at the correct page (macOS)
+- **Deep links** — open PDFs at the correct page (macOS / Skim)
 - **JSON output** for piping and AI agent integration
-- **Multiple knowledgebases** — independent named KBs (e.g. `--name dev`)
+- **Multiple knowledgebases** — independent named KBs (e.g. `--name fp`)
+- **Incremental updates** — add single books to an existing KB (`kb add`)
 
 ## Prerequisites
 
@@ -49,11 +51,27 @@ All knowledgebase data is stored under `~/Knowledgebase/<name>/`.
 ### Build a Knowledgebase
 
 ```bash
-# Initialize from a directory of PDFs and/or EPUBs
+# Initialize from a directory of PDFs and/or EPUBs (with Vision AI)
 kb init ~/Books
 
 # Named knowledgebase
-kb init ~/Books --name dev
+kb init ~/Books --name fp
+
+# Without Vision AI (saves cost/time)
+kb init ~/Books --no-vision
+
+# Custom base directory
+kb init ~/Books --name fp --base-dir /custom/path
+```
+
+### Add Books to an Existing Knowledgebase
+
+```bash
+# Add a single book
+kb add ~/Books/new-book.pdf
+
+# Add a directory of books to a named KB
+kb add ~/Books/new-books/ --name fp
 ```
 
 ### Ask Questions (RAG)
@@ -135,23 +153,25 @@ kb search "functor laws" --json
 ```
 knowledgebase/
 ├── cli.py              # Typer CLI entry point (kb command)
-├── config.py           # Configuration (paths, models)
+├── config.py           # Configuration (paths, models, vision flag)
 ├── models.py           # Data classes (Chunk, SearchResult, Answer)
 └── core/
-    ├── extract.py      # PDF/EPUB → Markdown with page/chapter references
-    ├── chunk.py        # Markdown → Chunks with metadata
+    ├── extract.py      # PDF/EPUB → Markdown with page/chapter references + image extraction
+    ├── chunk.py        # Markdown → Chunks with metadata (page, chapter, images)
     ├── index.py        # FAISS index (build, load, save)
-    ├── search.py       # Semantic search
-    ├── answer.py       # RAG answer generation (LLM + sources)
-    └── open_source.py  # Open PDF at page (macOS)
+    ├── search.py       # Semantic search with book filter
+    ├── answer.py       # RAG answer generation (LLM + sources + images)
+    ├── vision.py       # Vision AI: image description via GPT-4o, base64 encoding
+    └── open_source.py  # Open PDF at page (macOS / Skim)
 ```
 
 ### Pipeline
 
 ```
-PDF/EPUB → extract → Markdown → chunk → Chunks → index → FAISS
-                                                          ↓
-                    Question → search → Chunks → LLM → Answer + Sources
+PDF/EPUB → extract → Markdown + Images → chunk → Chunks → index → FAISS
+              ↓                                                     ↓
+        Vision AI (GPT-4o)              Question → search → Chunks → LLM → Answer + Sources + Images
+         describes images
 ```
 
 ## Technology Stack
@@ -164,6 +184,7 @@ PDF/EPUB → extract → Markdown → chunk → Chunks → index → FAISS
 | Embeddings | OpenAI text-embedding-3-large |
 | Vector index | FAISS (faiss-cpu) |
 | LLM (RAG) | OpenAI GPT-4o |
+| Vision AI | OpenAI GPT-4o Vision |
 | CLI framework | Typer |
 | Tests | pytest |
 | Packaging | pyproject.toml + pip install -e . |
@@ -174,13 +195,16 @@ PDF/EPUB → extract → Markdown → chunk → Chunks → index → FAISS
 - [x] Phase 2: CLI with Typer
 - [x] Phase 3: RAG answer generation (`kb ask`)
 - [x] EPUB support (extraction abstraction + EPUB extractor)
+- [x] Vision AI — image extraction, GPT-4o description, indexing, base64 in RAG answers
 - [x] Model upgrades (`text-embedding-3-large`, `gpt-4o`, `top_k=10`)
-- [x] E2E test suite (10 pipeline tests with programmatic PDF fixtures)
+- [x] E2E test suite (pipeline tests with programmatic PDF fixtures)
 - [x] Multi-KB management (`--name`, `--base-dir`)
-- [x] Global CLI installation (`~/.local/bin/kb`)
-- [x] LambdaPy migration — 4 thematic KBs (fp, cat, arch, ai) from 20 books
+- [x] Global CLI installation (`pip install -e .`)
+- [x] LambdaPy migration — 4 thematic KBs (fp, cat, arch, ai) from 43 books
 - [x] Incremental updates (`kb add` for single books)
 - [ ] Configuration file (`~/Knowledgebase/config.toml`)
+- [ ] `kb rebuild` — rebuild index from scratch
+- [ ] `kb config` — show/edit configuration
 
 ## Development
 
