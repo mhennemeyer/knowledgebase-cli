@@ -83,6 +83,10 @@ kb ask "clean code" --name arch          # Spezifische KB abfragen
 # Quelle öffnen
 kb open "Clean-Code.pdf" --page 42       # PDF auf Seite 42 öffnen
 
+# KB-Übersicht (für Agents: welche KB wofür?)
+kb kbs                                   # Alle KBs mit Büchertiteln auflisten
+kb kbs --json                            # JSON-Ausgabe (Agent-Discovery)
+
 # Verwaltung
 kb list                                  # Alle indizierten Bücher anzeigen
 kb list --name fp                        # Bücher einer benannten KB

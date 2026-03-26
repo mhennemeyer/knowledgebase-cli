@@ -6,6 +6,7 @@ import pytest
 from typer.testing import CliRunner
 
 from knowledgebase.cli import app
+from knowledgebase.config import KBConfig
 from knowledgebase.models import Answer, Chunk, SearchResult
 
 runner = CliRunner()
@@ -138,6 +139,76 @@ def test_status_missing_index(tmp_path):
     with patch("knowledgebase.config.DEFAULT_KB_DIR", tmp_path / ".kb"):
         result = runner.invoke(app, ["status"])
 
+    assert result.exit_code == 1
+
+
+# --- kbs ---
+
+def test_kbs_lists_all_knowledgebases(tmp_path):
+    """kb kbs listet alle KBs mit Büchertiteln auf."""
+    # Zwei KBs anlegen
+    for kb_name, book_titles in [("fp", ["FP Book", "Lambda Book"]), ("cat", ["Category Theory"])]:
+        config = KBConfig(name=kb_name, base_dir=tmp_path)
+        config.ensure_dirs()
+        chunks = [
+            Chunk(text=f"text {i}", book=title, book_file=f"{title.lower().replace(' ', '-')}.md", page=1, chunk_id=i)
+            for i, title in enumerate(book_titles)
+        ]
+        import json as _json
+        from dataclasses import asdict
+        config.chunks_path.write_text(_json.dumps([asdict(c) for c in chunks], ensure_ascii=False))
+        # Dummy FAISS index
+        import numpy as np
+        import faiss
+        dim = 16
+        index = faiss.IndexFlatIP(dim)
+        vecs = np.random.rand(len(chunks), dim).astype(np.float32)
+        faiss.normalize_L2(vecs)
+        index.add(vecs)
+        faiss.write_index(index, str(config.index_path))
+
+    result = runner.invoke(app, ["kbs", "--base-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "fp" in result.stdout
+    assert "cat" in result.stdout
+    assert "FP Book" in result.stdout
+    assert "Category Theory" in result.stdout
+    assert "2 Knowledgebases" in result.stdout
+
+
+def test_kbs_json_output(tmp_path):
+    """kb kbs --json gibt strukturierte JSON-Ausgabe."""
+    config = KBConfig(name="test", base_dir=tmp_path)
+    config.ensure_dirs()
+    chunks = [
+        Chunk(text="text", book="Test Book", book_file="test.md", page=1, chunk_id=0),
+    ]
+    import json as _json
+    from dataclasses import asdict
+    config.chunks_path.write_text(_json.dumps([asdict(c) for c in chunks], ensure_ascii=False))
+    import numpy as np
+    import faiss
+    dim = 16
+    index = faiss.IndexFlatIP(dim)
+    vecs = np.random.rand(1, dim).astype(np.float32)
+    faiss.normalize_L2(vecs)
+    index.add(vecs)
+    faiss.write_index(index, str(config.index_path))
+
+    result = runner.invoke(app, ["kbs", "--json", "--base-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert "knowledgebases" in data
+    assert len(data["knowledgebases"]) == 1
+    assert data["knowledgebases"][0]["name"] == "test"
+    assert data["knowledgebases"][0]["book_titles"] == ["Test Book"]
+
+
+def test_kbs_empty_base_dir(tmp_path):
+    """kb kbs zeigt Fehler wenn keine KBs vorhanden."""
+    result = runner.invoke(app, ["kbs", "--base-dir", str(tmp_path)])
     assert result.exit_code == 1
 
 

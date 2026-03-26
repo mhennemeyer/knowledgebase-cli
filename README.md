@@ -93,11 +93,24 @@ kb search "clean code" --book "Clean-Code"
 kb search "category theory" --json
 ```
 
+### List Available Knowledgebases
+
+```bash
+# Show all KBs with book titles (for humans)
+kb kbs
+
+# JSON output (for AI agents — discover which KB to query)
+kb kbs --json
+```
+
+> **Note:** Without `--name`, commands like `kb ask` and `kb search` query only the `default` KB, not all KBs. Use `kb kbs` to discover available KBs and then target the right one with `--name`.
+
 ### Other Commands
 
 ```bash
-# List all indexed books
+# List all indexed books in a KB
 kb list
+kb list --name fp
 
 # Show index statistics
 kb status

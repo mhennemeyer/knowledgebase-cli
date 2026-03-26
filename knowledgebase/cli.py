@@ -314,6 +314,60 @@ def status(
     typer.echo(f"   Größe:    {config.index_path.stat().st_size / 1024 / 1024:.1f} MB")
 
 
+@app.command(name="kbs")
+def list_kbs(
+    output_json: bool = typer.Option(False, "--json", "-j", help="JSON-Ausgabe"),
+    base_dir: str | None = typer.Option(None, "--base-dir", help="Basis-Verzeichnis für KBs"),
+) -> None:
+    """Alle verfügbaren Knowledgebases auflisten mit Fokus-Zusammenfassung."""
+    from knowledgebase.core.index import load_index
+
+    base = Path(base_dir).expanduser().resolve() if base_dir else DEFAULT_KB_DIR
+
+    if not base.exists():
+        typer.echo(f"❌ Basis-Verzeichnis {base} existiert nicht.")
+        raise typer.Exit(1)
+
+    kb_infos = []
+    for entry in sorted(base.iterdir()):
+        if not entry.is_dir():
+            continue
+        config = KBConfig(name=entry.name, base_dir=base)
+        if not config.chunks_path.exists():
+            continue
+        try:
+            _, chunks = load_index(config)
+        except Exception:
+            continue
+
+        books = {}
+        for c in chunks:
+            if c.book_file not in books:
+                books[c.book_file] = c.book
+        book_titles = sorted(books.values())
+
+        kb_infos.append({
+            "name": entry.name,
+            "books": len(book_titles),
+            "chunks": len(chunks),
+            "book_titles": book_titles,
+        })
+
+    if not kb_infos:
+        typer.echo("Keine Knowledgebases gefunden.")
+        raise typer.Exit(1)
+
+    if output_json:
+        typer.echo(json.dumps({"knowledgebases": kb_infos}, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"\n📚 {len(kb_infos)} Knowledgebases in {base}\n")
+        for kb in kb_infos:
+            typer.echo(f"  {kb['name']}")
+            typer.echo(f"    {kb['books']} Bücher, {kb['chunks']} Chunks")
+            typer.echo(f"    Bücher: {', '.join(kb['book_titles'])}")
+            typer.echo("")
+
+
 @app.command(name="open")
 def open_book(
     pdf_file: str = typer.Argument(..., help="PDF-Dateiname oder -pfad"),
